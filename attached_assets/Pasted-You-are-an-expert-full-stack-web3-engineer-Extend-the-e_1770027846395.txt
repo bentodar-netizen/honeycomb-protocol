@@ -1,0 +1,220 @@
+You are an expert full-stack web3 engineer. Extend the existing monorepo "honeycomb-bnb" with a new FUN module: "Honeycomb Duels" — a head-to-head prediction game where bots (AI agents) bet equal BNB amounts against each other on short-term price direction (30s, 1m, 5m). Winner takes 90% of the pot; Honeycomb treasury takes 10%.
+
+IMPORTANT:
+- This is BNB Chain (EVM) ONLY.
+- Backend NEVER holds user funds or private keys.
+- Users/bots sign transactions with their own wallets.
+- Use local Hardhat by default. Add configs for BSC testnet/mainnet and opBNB.
+- Include clear disclaimer in UI/README: “For entertainment only. Check local laws.”
+
+CORE GAME RULES:
+- Match format: 1v1 duel, equal stake in BNB (native coin).
+- If two bots stake 1 BNB each:
+  - pot = 2 BNB
+  - winner payout = 1.8 BNB (90%)
+  - fee to Honeycomb treasury = 0.2 BNB (10%)
+- Market: “price will go UP or DOWN” from start price to end price.
+- Durations: 30 seconds, 60 seconds, 300 seconds.
+- Assets universe: “Top 100 tokens/coins on CoinMarketCap” (do not hardcode list; implement pluggable token list provider).
+- Settlement must be deterministic and verifiable using a price oracle strategy.
+
+ARCHITECTURE OVERVIEW:
+- On-chain: escrow, duel lifecycle, fee split, settlement state.
+- Off-chain: price data fetching + signed price snapshots (MVP) and a pluggable oracle adapter for later (e.g., Chainlink/Pyth/RedStone).
+- Indexer: listens to duel events and builds UI.
+
+SMART CONTRACTS (Solidity + Hardhat):
+Create /packages/contracts/contracts/duels:
+
+1) HoneycombTreasuryVault.sol
+- holds platform fees (native coin)
+- withdraw(to, amount) onlyOwner
+- emit TreasuryWithdrawn
+
+2) HoneycombDuels.sol
+Data types:
+- enum Direction { UP, DOWN }
+- enum Status { OPEN, LIVE, SETTLED, CANCELLED, EXPIRED }
+- struct Duel {
+    uint256 id;
+    bytes32 assetId;          // e.g., keccak256("CMC:BNB") or "CMC:BTC"
+    uint32 durationSec;       // 30/60/300
+    uint256 stakeWei;         // equal stake
+    address creator;
+    address joiner;
+    Direction creatorDir;
+    uint256 startPrice;       // integer price with decimals (store decimals separately or fixed 1e8)
+    uint256 endPrice;
+    uint64 startTs;
+    uint64 endTs;
+    Status status;
+  }
+
+Oracle strategy (MVP):
+- Settlement uses “signed price snapshot” submitted by an ORACLE role.
+- The ORACLE submits startPrice at duel activation and endPrice at settlement time.
+- ORACLE address configurable; role-based access control via OpenZeppelin AccessControl.
+
+Functions:
+- createDuel(bytes32 assetId, uint32 durationSec, Direction creatorDir) payable returns (duelId)
+  - requires msg.value > 0
+  - durationSec must be one of 30/60/300
+  - sets stakeWei = msg.value
+  - status OPEN
+
+- joinDuel(uint256 duelId, Direction joinerDir) payable
+  - requires duel OPEN
+  - requires msg.value == stakeWei
+  - requires joinerDir != creatorDir (force opposite sides)
+  - sets joiner, status LIVE
+  - sets startTs = block.timestamp
+  - sets endTs = startTs + durationSec
+  - emit DuelJoined
+
+- oracleSetStartPrice(uint256 duelId, uint256 price) onlyRole(ORACLE)
+  - can be called once shortly after LIVE
+  - store startPrice, emit StartPriceSet
+
+- oracleSettle(uint256 duelId, uint256 endPrice) onlyRole(ORACLE) nonReentrant
+  - requires status LIVE and block.timestamp >= endTs
+  - store endPrice
+  - determine winner:
+    if endPrice > startPrice -> UP wins
+    if endPrice < startPrice -> DOWN wins
+    if equal -> refund both minus zero fee OR treat as draw refund full (choose: refund full, no fee)
+  - payout math:
+    pot = 2*stakeWei
+    fee = pot * 10 / 100
+    payout = pot - fee
+    transfer fee to TreasuryVault
+    transfer payout to winner
+  - status SETTLED
+  - emit DuelSettled(winner, payout, fee, startPrice, endPrice)
+
+- cancelOpenDuel(uint256 duelId)
+  - only creator
+  - only if OPEN
+  - refund stake to creator
+  - status CANCELLED
+
+- expireOpenDuel(uint256 duelId)
+  - if OPEN for > X minutes (config) allow anyone to expire -> refund creator
+  - status EXPIRED
+
+Events:
+- DuelCreated(duelId, assetId, durationSec, stakeWei, creator, creatorDir)
+- DuelJoined(duelId, joiner, joinerDir, startTs, endTs)
+- StartPriceSet(duelId, startPrice)
+- DuelSettled(duelId, winner, payoutWei, feeWei, startPrice, endPrice)
+- DuelCancelled / DuelExpired
+
+SECURITY REQUIREMENTS:
+- ReentrancyGuard for settlement/payouts
+- AccessControl for ORACLE
+- Validate duration and stake matching
+- Avoid rounding bugs; test fee and payout.
+- Draw handling must be tested.
+
+TESTS:
+- Unit tests for:
+  - create/join with equal stake
+  - wrong stake rejected
+  - opposite direction enforced
+  - settle UP/DOWN correctly
+  - draw refunds correctly
+  - fee = 10% of pot
+  - payout = 90% of pot
+  - cancellation and expiry flows
+
+BACKEND (Fastify):
+Add a Duels service with:
+- Token list provider abstraction:
+  - interface AssetListProvider { listTopAssets(limit:number): Promise<{symbol,name,assetId}[]> }
+  - Implement CMC provider (requires CMC API key) and a LocalMock provider for dev.
+  - Use env: CMC_API_KEY. If missing, fallback to mock list.
+
+- Price provider abstraction:
+  - interface PriceProvider { getSpot(assetId): Promise<{price:int, decimals:int}> }
+  - Implement:
+    - CMCPriceProvider using CoinMarketCap quotes endpoint (requires key)
+    - MockPriceProvider for local dev (random walk)
+  - Ensure rate-limits and caching.
+
+- Oracle signer (MVP):
+  - Backend acts as ORACLE operator but DOES NOT custody user funds.
+  - It signs & sends ONLY oracle price-setting tx from an ORACLE wallet in dev/test (document strongly).
+  - For mainnet: require running an oracle service with secured key; add disclaimer.
+
+Endpoints:
+- GET /v1/duels/assets
+  returns list of supported assets (top 100 or mock)
+
+- GET /v1/duels/feed?status=open|live|settled
+  returns duel list from DB/indexer
+
+- POST /v1/duels/quote
+  input: { assetId, durationSec, stakeWei }
+  output: { suggestedMin, warnings }
+
+- POST /v1/duels/oracle/start
+  internal/admin endpoint (protected) that:
+  - fetches spot price at duel start
+  - calls oracleSetStartPrice(duelId, price)
+
+- POST /v1/duels/oracle/settle
+  internal/admin endpoint (protected) that:
+  - fetches end price after endTs
+  - calls oracleSettle(duelId, endPrice)
+
+Indexing:
+- Extend indexer to listen to duels events and store:
+  - duels table (id, assetId, duration, stake, creator, joiner, dirs, start/end price, status, timestamps)
+  - settlement results
+- Add a scheduled worker that:
+  - detects LIVE duels past endTs and triggers settlement via oracle endpoint (dev)
+  - for production, this can be a dedicated oracle runner.
+
+FRONTEND (Next.js):
+Add a "Duels" section:
+- /duels (tabs: Open, Live, Settled)
+- /duels/new (create duel):
+  - select asset (from /assets)
+  - select duration (30s/1m/5m)
+  - stake amount (BNB)
+  - pick direction (UP/DOWN)
+  - on submit: prepare tx data via backend OR directly call contract with wagmi (preferred direct)
+- /duels/[id] (duel detail):
+  - show asset, timer countdown, stake, directions, participants
+  - show start price and end price when available
+  - show result + payout
+- Joining:
+  - if duel OPEN: join button chooses opposite direction automatically; user sends tx with matching stake
+- Include clear fee display: “10% platform fee from pot.”
+
+SDK (if present):
+Extend honeycomb-sdk:
+- duels.listAssets()
+- duels.create({assetId,durationSec,stakeWei,direction})
+- duels.join({duelId,stakeWei})
+- duels.watchDuel(duelId, handler)
+
+NOTES / DISCLAIMERS:
+- Add “For entertainment only” and “Check local laws” in README and UI.
+- Make oracle pluggable; in README describe how to swap to Chainlink/Pyth for assets that have feeds.
+- For assets without reliable on-chain feeds, keep signed snapshot oracle approach.
+
+DELIVERABLES:
+- Full contracts + tests
+- Backend providers + mock mode
+- Frontend pages
+- Indexer integration
+- pnpm dev runs end-to-end locally:
+  1) create duel
+  2) join duel with equal stake
+  3) oracle sets start price
+  4) wait duration
+  5) oracle settles
+  6) winner receives 90%, treasury receives 10%
+Fix all errors until everything works.
+
+BNB Chain only. No Solana references.

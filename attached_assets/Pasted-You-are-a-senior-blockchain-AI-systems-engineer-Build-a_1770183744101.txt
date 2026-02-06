@@ -1,0 +1,216 @@
+You are a senior blockchain + AI systems engineer.
+
+Build an AI-native autonomous launchpad called “Honeycomb Launcher” on BNB Chain.
+
+CORE IDEA
+AI agents (not humans) can autonomously:
+- Create tokens
+- Define launch parameters
+- Launch via bonding curve
+- Trigger graduation to PancakeSwap
+- Operate without human signatures or manual actions
+
+Humans only observe, trade, or fund agents.
+
+CHAIN
+- BNB Chain ONLY
+- Native BNB for all bonding curve trades
+
+TECH STACK
+- Smart Contracts: Solidity (Hardhat)
+- Backend Orchestrator: Node.js (TypeScript)
+- AI Agent Runtime: Agent executes actions via delegated signer
+- Web3: ethers v6
+- Frontend: Next.js + Tailwind
+- DB: SQLite (Prisma)
+- Indexing: Contract event listeners
+
+---
+
+## 1️⃣ AI AGENT IDENTITY MODEL
+
+Each AI agent has:
+- agentId (UUID)
+- controller contract wallet (EOA or AA-compatible)
+- metadata (name, description, strategy, avatar)
+- permissions:
+  - canDeployToken
+  - canLaunch
+  - canGraduate
+
+AI agents sign transactions using:
+- Pre-authorized agent private key
+- OR smart-contract based execution (preferred)
+
+NO HUMAN SIGNATURES REQUIRED AFTER REGISTRATION.
+
+---
+
+## 2️⃣ AGENT TOKEN CREATION
+
+AI agent can call:
+launchToken(params)
+
+Params:
+- name
+- symbol
+- totalSupply (fixed)
+- graduationTargetBNB
+- curveParams
+- agentNarrative (stored on-chain or IPFS)
+- optional: autoLiquidityPercent (default 80%)
+
+Flow:
+1) Agent deploys ERC20 via factory
+2) Supply minted directly into BondingCurveVault
+3) Token is locked from external trading
+4) Token enters “INCUBATING” state
+
+Emit:
+AgentTokenCreated(agentId, token, timestamp)
+
+---
+
+## 3️⃣ BONDING CURVE (AI-CONTROLLED MARKET)
+
+Use *inventory-based CPMM bonding curve*:
+
+- Vault holds:
+  - tokenReserve
+  - bnbReserve
+- price = bnbReserve / tokenReserve
+
+Rules:
+- Anyone (human or agent) can buy/sell during incubation
+- Platform fee: configurable (e.g. 1%) → Honeycomb treasury
+- Slippage protection mandatory
+- Curve math fully on-chain
+- No DEX interaction yet
+
+Emit:
+Buy(user, bnbIn, tokensOut)
+Sell(user, tokensIn, bnbOut)
+
+---
+
+## 4️⃣ AUTONOMOUS GRADUATION (NO BUTTONS)
+
+Graduation is *automatic*.
+
+Trigger condition:
+- bnbReserve >= graduationTargetBNB
+
+When condition is met:
+- Contract auto-flags “READY_TO_GRADUATE”
+
+AI agent (or permissionless keeper) executes:
+graduate(token)
+
+Execution:
+1) Stop bonding curve trades
+2) Convert BNB → WBNB
+3) Create PancakeSwap pair
+4) Add liquidity:
+   - X% BNB + matching tokens
+5) Lock LP tokens:
+   - Timelock contract
+6) Emit finalization events
+
+Emit:
+AgentGraduated(agentId, token, pair)
+
+NO HUMAN APPROVALS  
+NO ADMIN OVERRIDES
+
+---
+
+## 5️⃣ AI-TO-AI ECONOMICS (IMPORTANT)
+
+AI agents can:
+- Launch multiple tokens
+- Buy/sell other agent tokens
+- Compete for volume, holders, graduation speed
+
+Optional extensions (prepare hooks):
+- Agent reputation score
+- Agent PnL tracking
+- Agent leaderboard
+- Agent vs Agent launch battles
+
+---
+
+## 6️⃣ SECURITY & CONSTRAINTS
+
+- Agent cannot:
+  - Withdraw LP
+  - Change supply
+  - Change graduation target after launch
+- All parameters immutable post-creation
+- Reentrancy protection
+- One-time graduation enforced
+- Emergency pause (DAO/multisig placeholder)
+
+---
+
+## 7️⃣ FRONTEND (OBSERVATION-FIRST)
+
+UI is NOT for launching.
+
+Pages:
+- Agent Directory
+- Agent Profile (strategy, launches, win rate)
+- Token Page:
+  - bonding curve chart
+  - graduation progress
+  - agent narrative
+- “Graduated” badge + PancakeSwap link
+
+Humans:
+- connect wallet
+- trade
+- watch agents compete
+
+---
+
+## 8️⃣ CONFIG
+
+.env
+- BNB_RPC
+- CHAIN_ID
+- AGENT_EXECUTOR_KEY
+- HONEYCOMB_TREASURY
+- PLATFORM_FEE_BPS
+- PANCAKESWAP_ROUTER
+- WBNB_ADDRESS
+- LP_LOCK_TIME
+
+---
+
+## 9️⃣ DELIVERABLES
+
+/contract
+- AgentRegistry
+- TokenFactory
+- BondingCurveVault
+- GraduationExecutor
+- LPLocker
+
+/backend
+- Agent runtime
+- Event indexer
+- AI execution loop
+
+/frontend
+- Agent & token explorer
+- Live bonding curve UI
+
+README
+- How agents are registered
+- How autonomous launches work
+- How graduation happens
+- Why humans are optional
+
+IMPORTANT
+This is NOT a normal launchpad.
+This is a protocol where AI agents spawn assets and compete on BNB Chain.
+Write the code clean, commented, deterministic, and production-minded.

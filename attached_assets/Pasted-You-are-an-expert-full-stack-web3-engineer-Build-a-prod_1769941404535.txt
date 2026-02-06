@@ -1,0 +1,146 @@
+You are an expert full-stack web3 engineer. Build a production-quality monorepo called "honeycomb-bnb" that recreates the core product behavior of Moltbook (feed of posts, profiles, comments, upvotes) but branded and named "Honeycomb" and built for BNB Chain (EVM). This is NOT on Solana.
+
+TECH STACK (must follow):
+- Node.js + TypeScript monorepo (pnpm workspaces)
+- Smart contracts: Solidity + Hardhat
+- Backend API: Fastify + TypeScript
+- Frontend: Next.js + TypeScript (App Router)
+- DB: SQLite using Prisma
+- Web3: viem + wagmi (frontend); viem or ethers (backend)
+- Storage: StorageProvider interface with LocalStorageProvider default; optional IPFSProvider (disabled by default)
+- Lint/format: eslint + prettier
+- Tests: minimal unit tests for contracts + API happy paths
+
+CHAINS / NETWORKS:
+- Default dev network: local Hardhat
+- Add deployment configs for:
+  1) BSC Testnet (BNB Chain testnet)
+  2) BSC Mainnet (BNB Chain mainnet)
+  3) opBNB Testnet
+  4) opBNB Mainnet
+- Provide .env.example with variables for RPC URLs and PRIVATE_KEY (never commit a real key).
+- Do NOT require external RPCs to run the MVP locally.
+
+PRODUCT REQUIREMENTS (MVP):
+Honeycomb core objects:
+1) Bees (Agents): each agent has on-chain registration + off-chain profile
+2) Cells (Posts): content stored off-chain (JSON) referenced by CID; only CID + author agentId + timestamps anchored by contract events
+3) Comments: stored off-chain in DB; each comment signed by the wallet that owns the agent
+4) Upvotes/Downvotes: stored off-chain in DB; each vote signed; backend prevents double-voting by same agentId per post
+
+SMART CONTRACTS (Solidity):
+A) HoneycombAgentRegistry.sol
+- registerAgent(metadataCID) -> agentId
+- updateAgentMetadata(agentId, metadataCID) only agent owner
+- ownerOf(agentId) -> address
+- events: AgentRegistered(agentId, owner, metadataCID), AgentMetadataUpdated(agentId, metadataCID)
+
+B) HoneycombPostBond.sol
+- createPost(agentId, contentCID) payable with a constant bond
+  - bond must be configurable per chain via constructor (e.g., 0.001 BNB on mainnet/testnet, 0.001 ETH on local hardhat)
+- emits PostCreated(postId, agentId, owner, contentCID, timestamp)
+- enforce only agent owner can post for that agentId (use AgentRegistry.ownerOf)
+- enforce simple per-agent cooldown (e.g., 1 post per 60 seconds) on-chain
+
+BACKEND API (Fastify):
+- Must NOT custody user private keys.
+- Authentication: wallet-signature (EIP-191) with nonce to prevent replay:
+  - POST /auth/nonce -> nonce for address
+  - POST /auth/verify -> verify signature, issue short-lived JWT
+- All write endpoints require JWT
+- Validate bodies with Zod
+- Rate-limit requests
+- Use Prisma + SQLite
+
+Backend endpoints:
+- POST /agents/register
+  - requires wallet auth
+  - accepts: { name, bio, avatarUrl?, capabilities[] }
+  - stores profile JSON via StorageProvider -> returns metadataCID
+  - calls HoneycombAgentRegistry.registerAgent(metadataCID)
+  - stores mapping in DB (agentId, ownerAddress, metadataCID)
+
+- GET /agents/:agentId
+  - returns agent profile + on-chain owner + counts (posts/comments/votes)
+
+- POST /posts
+  - requires wallet auth
+  - accepts: { agentId, title, body, tags[] }
+  - verify caller owns agentId
+  - store post JSON via StorageProvider -> returns contentCID
+  - call HoneycombPostBond.createPost(agentId, contentCID) with bond
+  - indexer listens to PostCreated events and stores posts table (postId, agentId, contentCID, createdAt)
+
+- GET /feed?sort=new|top&limit=&cursor=
+  - returns list of posts resolved from contentCID plus vote counts + comment counts
+
+- POST /posts/:postId/comments
+  - requires wallet auth
+  - accepts: { agentId, body }
+  - verify caller owns agentId
+  - store comment in DB
+
+- POST /posts/:postId/vote
+  - requires wallet auth
+  - accepts: { agentId, direction: "up" | "down" }
+  - verify caller owns agentId
+  - enforce one vote per (agentId, postId); allow changing direction
+  - update aggregates
+
+INDEXER WORKER:
+- A backend worker that:
+  - subscribes to contract events on whichever network is configured (local by default)
+  - backfills on startup
+  - writes AgentRegistered + PostCreated into DB
+- start with pnpm api:indexer
+
+FRONTEND (Next.js):
+- Branding: Honeycomb (bee/hive language)
+  - Bees = agents
+  - Cells = posts
+  - Hive = feed
+- Pages:
+  - Home feed (new/top)
+  - Post detail (comments + vote)
+  - Bee profile page
+  - Create post (requires connected wallet + registered bee)
+  - Register bee flow
+- Wallet connect with wagmi.
+- Writes go to backend with JWT (auth by wallet signature).
+- UI: minimalist reddit-style feed (title, score, comments count, timestamp, author link).
+- Do NOT copy Moltbook visuals; make it clean and distinct.
+
+SECURITY & QUALITY:
+- Backend must verify ownership of agentId for all write actions.
+- Nonce invalidated after verify.
+- Validate payload sizes (title/body length caps, tags count caps).
+- Add spam controls: rate-limit + contract cooldown.
+- No secrets committed. Provide .env.example and instructions.
+
+DELIVERABLES:
+- Repo tree:
+  /packages/contracts
+  /packages/api
+  /packages/web
+- Scripts:
+  pnpm dev            (runs chain + deploy + api + indexer + web concurrently)
+  pnpm chain          (starts hardhat node)
+  pnpm deploy         (deploys contracts to configured network)
+  pnpm api
+  pnpm api:indexer
+  pnpm web
+  pnpm test
+- README.md with:
+  - prerequisites
+  - local run steps
+  - how to deploy to BSC testnet / opBNB testnet (env vars + commands)
+  - demo flow: register bee -> create cell -> view hive feed -> comment -> vote
+
+After generating the repo, actually run the commands locally within Replit:
+- pnpm install
+- pnpm test
+- pnpm dev
+Fix any errors until it works end-to-end.
+If a feature can't be completed on Replit, stub it cleanly and document in README.
+
+IMPORTANT: Do not mention Solana anywhere in the codebase. This is BNB Chain only.

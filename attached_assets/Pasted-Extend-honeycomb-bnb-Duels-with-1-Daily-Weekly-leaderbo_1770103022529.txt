@@ -1,0 +1,100 @@
+Extend honeycomb-bnb "Duels" with:
+1) Daily + Weekly leaderboards
+2) A VRF-based Random Duel mode (verifiable randomness)
+3) Automated duels (PvP matching + Player vs HouseBot) with risk limits
+
+BNB Chain only (EVM). Local Hardhat default.
+Backend never holds user funds/keys.
+
+------------------------------------------------------------
+A) LEADERBOARDS
+------------------------------------------------------------
+Backend/DB:
+- Add tables:
+  duel_stats(agentId, wins, losses, draws, volumeWei, pnlWei, lastUpdated)
+  leaderboard_daily(date, agentId, wins, losses, pnlWei, volumeWei)
+  leaderboard_weekly(weekStartDate, agentId, wins, losses, pnlWei, volumeWei)
+
+- Indexer: on DuelSettled update duel_stats incrementally.
+- Worker:
+  - recompute daily and weekly snapshots every 5 minutes
+  - finalize a day at UTC 00:00 (configurable)
+
+API:
+- GET /v1/duels/leaderboard?range=daily|weekly&date=YYYY-MM-DD
+- GET /v1/duels/stats/:agentId
+
+Frontend:
+- /duels/leaderboard with tabs Daily / Weekly
+- show rank, bee, pnl (BNB), win rate, wins, volume
+
+------------------------------------------------------------
+B) RANDOM DUEL MODE (VRF)
+------------------------------------------------------------
+Goal: outcome determined by verifiable randomness (UP/DOWN) instead of price.
+Add to HoneycombDuels contract:
+- enum DuelType { PRICE, RANDOM }
+- Duel stores duelType.
+
+For RANDOM duels:
+- Use a VRF provider abstraction.
+- Implement a VRFConsumer contract that requests randomness and calls back fulfillRandomness.
+
+Preferred: integrate a VRF that works on BNB Chain (in local dev use a MockVRF).
+- In Hardhat: MockVRF that returns deterministic random based on blockhash + requestId.
+- In production: provide adapter interface and env config for VRF coordinator addresses.
+
+Flow:
+- After both players joined and commit-reveal finished (if using commit-reveal), request VRF at duel end.
+- When VRF fulfills:
+  randomBit = randomWord % 2
+  if randomBit==0 -> UP wins, else DOWN wins (or map to creator/joiner)
+- Settle payouts with same 10% fee.
+- Emit RandomnessRequested, RandomnessFulfilled events.
+
+Tests:
+- ensure randomness fulfillment leads to settlement
+- ensure fee/payout correct
+
+Frontend:
+- Create duel page supports DuelType toggle: PRICE or RANDOM
+- RANDOM shows "provably fair" badge and explains VRF settlement
+
+------------------------------------------------------------
+C) AUTOMATION: MATCHMAKING + HOUSEBOT
+------------------------------------------------------------
+Add an "Auto Duels" worker (backend) that can:
+1) Matchmaking (PvP):
+- Maintain a queue by {assetId, duration, stake, duelType}
+- When a compatible duel is created OPEN, show it in UI and allow "Auto-Join" by bots.
+
+2) HouseBot (Player vs House):
+- A HouseBot can join OPEN duels under constraints:
+  - maxStakeWei
+  - allowedAssets list
+  - dailyLossLimitWei
+  - maxConcurrentDuels
+- HouseBot keys must NEVER be committed.
+- For local dev ONLY: allow DEV_HOUSEBOT_PRIVATE_KEY in env and strongly document production security.
+
+Backend endpoints:
+- POST /v1/duels/housebot/enqueue (admin) { enabled, settings }
+- GET /v1/duels/housebot/status
+
+Chat integration:
+- In duels chat room, post updates:
+  - new duel
+  - joined by housebot
+  - settled result and payouts
+- Link to duel page.
+
+------------------------------------------------------------
+DELIVERABLES
+------------------------------------------------------------
+- Updated contracts + tests
+- Updated indexer + DB + APIs
+- Updated UI pages
+- MockVRF for local dev + adapter interface for production VRF
+- pnpm test and pnpm dev must run end-to-end.
+
+BNB Chain only. No Solana references.

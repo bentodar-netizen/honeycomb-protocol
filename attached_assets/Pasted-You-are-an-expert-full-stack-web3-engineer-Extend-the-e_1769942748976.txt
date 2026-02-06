@@ -1,0 +1,177 @@
+You are an expert full-stack web3 engineer. Extend the existing "honeycomb-bnb" monorepo to add a second major feature: Bounties (aka "Honey") so Honeycomb becomes an agent task marketplace, not just a feed.
+
+GOAL:
+Add "Bounties" where any user/bee can create a task with an escrowed reward, and bees can submit solutions. The creator can accept a solution, releasing funds to the winner. This must work on BNB Chain (EVM) and continue to run locally on Hardhat by default.
+
+HONEYCOMB TERMINOLOGY:
+- Bees = agents
+- Cells = posts
+- Hive = feed
+- Honey = bounty reward
+
+SMART CONTRACTS:
+Add a new Solidity contract in /packages/contracts:
+C) HoneycombBountyEscrow.sol
+
+Requirements:
+- Uses HoneycombAgentRegistry to verify bee ownership.
+- Supports native token escrow (BNB on chain, ETH on hardhat).
+- Must emit events so the indexer can build the UI from events.
+
+Functions:
+1) createBounty(agentId, bountyCID, deadlineTimestamp) payable
+   - Requires msg.value > 0
+   - Requires caller owns agentId
+   - Stores: bountyId, creatorAgentId, creatorAddress, bountyCID, rewardAmount, deadline, status
+   - Status: OPEN, AWARDED, CANCELLED, EXPIRED
+   - Emits: BountyCreated(bountyId, creatorAgentId, creator, bountyCID, rewardAmount, deadline)
+
+2) submitSolution(bountyId, agentId, solutionCID)
+   - Requires bounty OPEN and now <= deadline
+   - Requires caller owns agentId
+   - Stores solution submission with incremental solutionId per bounty
+   - Emits: SolutionSubmitted(bountyId, solutionId, agentId, solver, solutionCID, timestamp)
+
+3) awardSolution(bountyId, solutionId)
+   - Only bounty creator (creatorAddress) can call
+   - Requires bounty OPEN and has at least one solution
+   - Transfers escrowed rewardAmount to the solver address of that solution
+   - Sets bounty status AWARDED
+   - Emits: BountyAwarded(bountyId, solutionId, solverAddress, rewardAmount)
+
+4) cancelBounty(bountyId)
+   - Only bounty creator can call
+   - Only if no award yet
+   - Returns funds to creatorAddress
+   - Sets status CANCELLED
+   - Emits: BountyCancelled(bountyId)
+
+Also include:
+- view functions: getBounty(bountyId), getSolution(bountyId, solutionId), solutionsCount(bountyId)
+- Reentrancy protection (OpenZeppelin ReentrancyGuard)
+- Clear error messages / custom errors
+
+BACKEND (Fastify) CHANGES:
+1) Storage:
+- Add bounty JSON schema and solution JSON schema.
+- Store them using StorageProvider (LocalStorageProvider by default).
+
+Bounty JSON schema example:
+{
+  "type": "bounty",
+  "title": "Summarize today's BNB ecosystem news",
+  "body": "Provide a short report + key links",
+  "tags": ["news", "research"],
+  "rewardDisplay": "0.01 BNB",
+  "createdByAgentId": 1,
+  "createdAt": 1700000000
+}
+
+Solution JSON schema example:
+{
+  "type": "solution",
+  "bountyId": 12,
+  "body": "Here is the report...",
+  "attachments": [],
+  "submittedByAgentId": 3,
+  "submittedAt": 1700000123
+}
+
+2) New API endpoints (all write require JWT):
+- POST /bounties
+  body: { agentId, title, body, tags[], deadlineSecondsFromNow, rewardWei? }
+  behavior:
+    - verify caller owns agentId
+    - store bounty JSON -> bountyCID
+    - call HoneycombBountyEscrow.createBounty(agentId, bountyCID, deadlineTimestamp) with msg.value rewardWei
+    - return bountyId
+
+- GET /bounties?status=open|awarded|expired&limit=&cursor=
+  - returns bounties resolved from bountyCID + status + reward + deadline + counts
+
+- GET /bounties/:bountyId
+  - returns bounty details + list of solutions
+
+- POST /bounties/:bountyId/solutions
+  body: { agentId, body, attachments[]? }
+  behavior:
+    - verify caller owns agentId
+    - store solution JSON -> solutionCID
+    - call HoneycombBountyEscrow.submitSolution(bountyId, agentId, solutionCID)
+
+- POST /bounties/:bountyId/award
+  body: { solutionId }
+  behavior:
+    - verify caller is bounty creator (from on-chain bounty.creatorAddress)
+    - call HoneycombBountyEscrow.awardSolution(bountyId, solutionId)
+
+3) Indexer changes:
+- Subscribe to BountyCreated, SolutionSubmitted, BountyAwarded, BountyCancelled events
+- Store in DB tables:
+  - bounties: bountyId, creatorAgentId, creatorAddress, bountyCID, rewardWei, deadline, status, createdAt
+  - solutions: bountyId, solutionId, agentId, solverAddress, solutionCID, createdAt
+- Add a periodic job to mark OPEN bounties as EXPIRED in DB when now > deadline (contract status remains OPEN unless you implement expire; for MVP, keep expire off-chain in UI).
+
+FRONTEND (Next.js) CHANGES:
+Add new navigation item: "Honey" (Bounties)
+
+Pages:
+1) /honey (bounty list)
+  - tabs: Open / Awarded / Expired
+  - show title, reward amount, deadline, number of solutions, creator bee
+
+2) /honey/new
+  - create bounty form: title, body, tags, reward, deadline (hours/days)
+  - requires connected wallet + registered bee
+  - submits to backend
+
+3) /honey/[bountyId]
+  - bounty detail + solutions list
+  - submit solution form (for any bee)
+  - if viewer is creator: show "Award" buttons next to solutions
+
+UX REQUIREMENTS:
+- Do not send transactions directly from frontend; keep the model consistent:
+  - Frontend -> Backend API (JWT) -> Backend calls contracts using user's wallet? NO.
+IMPORTANT: The backend must NOT custody keys. Therefore:
+  - All contract writes must be initiated by the user's connected wallet on the frontend.
+  - Keep backend as storage + indexing + auth only.
+  - Change the architecture accordingly for bounties (and if needed, refactor posts too):
+    - Frontend signs and sends transactions via wagmi/viem.
+    - Backend stores JSON and returns CID + prepared transaction params (contract address, function, args, value).
+    - Frontend sends tx; indexer picks it up; backend feed updates.
+This is critical for mainnet safety.
+
+Therefore implement:
+- Backend "prepare" endpoints that return tx data:
+  - POST /tx/prepare/bounty
+  - POST /tx/prepare/post
+  - POST /tx/prepare/solution
+  - POST /tx/prepare/award
+Each returns:
+  { to, data, value, chainId, abiName, functionName, args } for frontend to execute.
+
+Refactor existing posting flow to follow this pattern too if it currently has the backend sending tx.
+
+SECURITY:
+- All prepared tx must be validated by backend:
+  - caller owns agentId
+  - value bounds (min/max)
+  - content size limits
+- Nonce-based login remains; JWT for API.
+- Rate-limit bounty creation and solution submits.
+
+DELIVERABLES:
+- Updated contracts + deployments + ABI exports to web
+- Updated API endpoints + prepare-tx flow
+- Updated indexer + DB migrations
+- Updated web UI pages
+- Updated README with:
+  - bounty flow demo
+  - security note: users sign tx; backend never holds keys
+- Run:
+  pnpm test
+  pnpm dev
+Fix errors until end-to-end works.
+
+Do NOT mention Solana anywhere. This is BNB Chain only.

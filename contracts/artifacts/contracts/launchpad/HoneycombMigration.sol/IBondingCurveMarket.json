@@ -1,0 +1,130 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "IBondingCurveMarket",
+  "sourceName": "contracts/launchpad/HoneycombMigration.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "token",
+          "type": "address"
+        }
+      ],
+      "name": "getMarketState",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "nativeReserve",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "tokenReserve",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "totalRaisedNative",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "tradingStartTime",
+              "type": "uint256"
+            },
+            {
+              "internalType": "bool",
+              "name": "graduated",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "initialized",
+              "type": "bool"
+            }
+          ],
+          "internalType": "struct IBondingCurveMarket.MarketState",
+          "name": "",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "token",
+          "type": "address"
+        }
+      ],
+      "name": "markets",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "nativeReserve",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "tokenReserve",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "totalRaisedNative",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "tradingStartTime",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bool",
+          "name": "graduated",
+          "type": "bool"
+        },
+        {
+          "internalType": "bool",
+          "name": "initialized",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "token",
+          "type": "address"
+        }
+      ],
+      "name": "withdrawForMigration",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "nativeAmount",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "tokenAmount",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x",
+  "deployedBytecode": "0x",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}

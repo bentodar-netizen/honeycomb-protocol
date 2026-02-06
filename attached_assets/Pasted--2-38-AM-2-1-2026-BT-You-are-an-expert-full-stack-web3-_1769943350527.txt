@@ -1,0 +1,372 @@
+[2:38 AM, 2/1/2026] BT: You are an expert full-stack web3 engineer. Extend the existing "honeycomb-bnb" monorepo to add a second major feature: Bounties (aka "Honey") so Honeycomb becomes an agent task marketplace, not just a feed.
+
+GOAL:
+Add "Bounties" where any user/bee can create a task with an escrowed reward, and bees can submit solutions. The creator can accept a solution, releasing funds to the winner. This must work on BNB Chain (EVM) and continue to run locally on Hardhat by default.
+
+HONEYCOMB TERMINOLOGY:
+- Bees = agents
+- Cells = posts
+- Hive = feed
+- Honey = bounty reward
+
+SMART CONTRACTS:
+Add a new Solidity contract in /packages/contracts:
+C) HoneycombBountyEscrow.sol
+
+Requirements:
+- Uses HoneycombAgentRegistry to verify bee ownership.
+- Supports native token escrow (BNB on chain, ETH on hardhat).
+- Must emit events so the indexer can build the UI from events.
+
+Functions:
+1) createBounty(agentId, bountyCID, deadlineTimestamp) payable
+   - Requires msg.value > 0
+   - Requires caller owns agentId
+   - Stores: bountyId, creatorAgentId, creatorAddress, bountyCID, rewardAmount, deadline, status
+   - Status: OPEN, AWARDED, CANCELLED, EXPIRED
+   - Emits: BountyCreated(bountyId, creatorAgentId, creator, bountyCID, rewardAmount, deadline)
+
+2) submitSolution(bountyId, agentId, solutionCID)
+   - Requires bounty OPEN and now <= deadline
+   - Requires caller owns agentId
+   - Stores solution submission with incremental solutionId per bounty
+   - Emits: SolutionSubmitted(bountyId, solutionId, agentId, solver, solutionCID, timestamp)
+
+3) awardSolution(bountyId, solutionId)
+   - Only bounty creator (creatorAddress) can call
+   - Requires bounty OPEN and has at least one solution
+   - Transfers escrowed rewardAmount to the solver address of that solution
+   - Sets bounty status AWARDED
+   - Emits: BountyAwarded(bountyId, solutionId, solverAddress, rewardAmount)
+
+4) cancelBounty(bountyId)
+   - Only bounty creator can call
+   - Only if no award yet
+   - Returns funds to creatorAddress
+   - Sets status CANCELLED
+   - Emits: BountyCancelled(bountyId)
+
+Also include:
+- view functions: getBounty(bountyId), getSolution(bountyId, solutionId), solutionsCount(bountyId)
+- Reentrancy protection (OpenZeppelin ReentrancyGuard)
+- Clear error messages / custom errors
+
+BACKEND (Fastify) CHANGES:
+1) Storage:
+- Add bounty JSON schema and solution JSON schema.
+- Store them using StorageProvider (LocalStorageProvider by default).
+
+Bounty JSON schema example:
+{
+  "type": "bounty",
+  "title": "Summarize today's BNB ecosystem news",
+  "body": "Provide a short report + key links",
+  "tags": ["news", "research"],
+  "rewardDisplay": "0.01 BNB",
+  "createdByAgentId": 1,
+  "createdAt": 1700000000
+}
+
+Solution JSON schema example:
+{
+  "type": "solution",
+  "bountyId": 12,
+  "body": "Here is the report...",
+  "attachments": [],
+  "submittedByAgentId": 3,
+  "submittedAt": 1700000123
+}
+
+2) New API endpoints (all write require JWT):
+- POST /bounties
+  body: { agentId, title, body, tags[], deadlineSecondsFromNow, rewardWei? }
+  behavior:
+    - verify caller owns agentId
+    - store bounty JSON -> bountyCID
+    - call HoneycombBountyEscrow.createBounty(agentId, bountyCID, deadlineTimestamp) with msg.value rewardWei
+    - return bountyId
+
+- GET /bounties?status=open|awarded|expired&limit=&cursor=
+  - returns bounties resolved from bountyCID + status + reward + deadline + counts
+
+- GET /bounties/:bountyId
+  - returns bounty details + list of solutions
+
+- POST /bounties/:bountyId/solutions
+  body: { agentId, body, attachments[]? }
+  behavior:
+    - verify caller owns agentId
+    - store solution JSON -> solutionCID
+    - call HoneycombBountyEscrow.submitSolution(bountyId, agentId, solutionCID)
+
+- POST /bounties/:bountyId/award
+  body: { solutionId }
+  behavior:
+    - verify caller is bounty creator (from on-chain bounty.creatorAddress)
+    - call HoneycombBountyEscrow.awardSolution(bountyId, solutionId)
+
+3) Indexer changes:
+- Subscribe to BountyCreated, SolutionSubmitted, BountyAwarded, BountyCancelled events
+- Store in DB tables:
+  - bounties: bountyId, creatorAgentId, creatorAddress, bountyCID, rewardWei, deadline, status, createdAt
+  - solutions: bountyId, solutionId, agentId, solverAddress, solutionCID, createdAt
+- Add a periodic job to mark OPEN bounties as EXPIRED in DB when now > deadline (contract status remains OPEN unless you implement expire; for MVP, keep expire off-chain in UI).
+
+FRONTEND (Next.js) CHANGES:
+Add new navigation item: "Honey" (Bounties)
+
+Pages:
+1) /honey (bounty list)
+  - tabs: Open / Awarded / Expired
+  - show title, reward amount, deadline, number of solutions, creator bee
+
+2) /honey/new
+  - create bounty form: title, body, tags, reward, deadline (hours/days)
+  - requires connected wallet + registered bee
+  - submits to backend
+
+3) /honey/[bountyId]
+  - bounty detail + solutions list
+  - submit solution form (for any bee)
+  - if viewer is creator: show "Award" buttons next to solutions
+
+UX REQUIREMENTS:
+- Do not send transactions directly from frontend; keep the model consistent:
+  - Frontend -> Backend API (JWT) -> Backend calls contracts using user's wallet? NO.
+IMPORTANT: The backend must NOT custody keys. Therefore:
+  - All contract writes must be initiated by the user's connected wallet on the frontend.
+  - Keep backend as storage + indexing + auth only.
+  - Change the architecture accordingly for bounties (and if needed, refactor posts too):
+    - Frontend signs and sends transactions via wagmi/viem.
+    - Backend stores JSON and returns CID + prepared transaction params (contract address, function, args, value).
+    - Frontend sends tx; indexer picks it up; backend feed updates.
+This is critical for mainnet safety.
+
+Therefore implement:
+- Backend "prepare" endpoints that return tx data:
+  - POST /tx/prepare/bounty
+  - POST /tx/prepare/post
+  - POST /tx/prepare/solution
+  - POST /tx/prepare/award
+Each returns:
+  { to, data, value, chainId, abiName, functionName, args } for frontend to execute.
+
+Refactor existing posting flow to follow this pattern too if it currently has the backend sending tx.
+
+SECURITY:
+- All prepared tx must be validated by backend:
+  - caller owns agentId
+  - value bounds (min/max)
+  - content size limits
+- Nonce-based login remains; JWT for API.
+- Rate-limit bounty creation and solution submits.
+
+DELIVERABLES:
+- Updated contracts + deployments + ABI exports to web
+- Updated API endpoints + prepare-tx flow
+- Updated indexer + DB migrations
+- Updated web UI pages
+- Updated README with:
+  - bounty flow demo
+  - security note: users sign tx; backend never holds keys
+- Run:
+  pnpm test
+  pnpm dev
+Fix errors until end-to-end works.
+
+Do NOT mention Solana anywhere. This is BNB Chain only.
+[2:49 AM, 2/1/2026] BT: You are an expert full-stack web3 engineer. Extend the existing "honeycomb-bnb" monorepo with three upgrades that make Honeycomb feel real and self-governing from day 1:
+1) Reputation (karma) for bees (agents)
+2) Anti-spam challenges + bond slashing for Cells (posts)
+3) Verified Bees (attestation / badge system)
+
+This must remain BNB Chain (EVM) only, run locally on Hardhat by default, and support deployment configs for BSC/opBNB. Do NOT mention Solana anywhere.
+
+ARCHITECTURE RULE (CRITICAL):
+Backend must NOT custody user keys.
+All on-chain writes are signed and sent by the user's connected wallet (frontend).
+Backend provides:
+- content storage (JSON -> CID)
+- auth (nonce + JWT)
+- indexing + DB
+- transaction preparation (returns tx data for frontend to submit)
+
+------------------------------------------------------------
+A) REPUTATION / KARMA
+------------------------------------------------------------
+Add contract: HoneycombReputation.sol (or implement inside a single contract if cleaner).
+
+Constraints:
+- Voting is high-frequency; keep raw votes OFF-CHAIN (DB).
+- Anchor periodic reputation snapshots ON-CHAIN for integrity and future portability.
+
+Design:
+- Backend computes reputation from DB votes (upvotes/downvotes on posts + awarded bounties).
+- A privileged "ReputationOracle" role can submit checkpoints on-chain.
+- In MVP, the "oracle" can be a multisig address you control (document it clearly).
+- Later can be upgraded to DAO.
+
+Contract requirements:
+- Stores latestRep[agentId] = uint256
+- Stores lastCheckpointAt = timestamp
+- Function: submitCheckpoint(uint256[] agentIds, uint256[] reps)
+  - onlyRole(REP_ORACLE)
+  - updates latestRep
+  - emits ReputationCheckpoint(agentId, rep, timestamp)
+- View: reputationOf(agentId)
+
+Add access control:
+- Use OpenZeppelin AccessControl
+- REP_ORACLE role granted to deployer by default
+- Provide a script to grant role to another address
+
+IMPORTANT: Keep arrays bounded per tx; add a limit constant (e.g., 200 agents max per call) to avoid gas blowups.
+
+Backend changes:
+- Add a job that recomputes reputation scores from DB:
+  - rep = (sum post upvotes - downvotes) + (bounty awards * bonus)
+- Add endpoint:
+  - POST /reputation/prepare-checkpoint
+    - requires admin JWT (separate ADMIN_JWT_SECRET)
+    - returns tx data to call submitCheckpoint(agentIds, reps)
+- Frontend: add an admin-only page to submit checkpoint (hidden behind env flag) OR provide a CLI script that uses a local wallet in dev only.
+
+------------------------------------------------------------
+B) ANTI-SPAM CHALLENGES + BOND SLASHING (POSTS)
+------------------------------------------------------------
+Extend HoneycombPostBond.sol to support:
+- Each post already requires a bond on createPost.
+Add challenge mechanics:
+
+State:
+- postId -> { agentId, owner, contentCID, createdAt, bondAmount, challenged, resolved, removed }
+- challengeId incremental
+- challenge struct: challenger, stake, reasonCID, openedAt, resolvedAt, outcome
+
+Functions:
+1) challengePost(postId, reasonCID) payable
+   - Requires post exists, not resolved, not removed
+   - Requires msg.value == CHALLENGE_STAKE (configurable in constructor)
+   - Marks post challenged
+   - Emits PostChallenged(challengeId, postId, challenger, reasonCID, timestamp)
+
+2) resolveChallenge(challengeId, outcome)
+   - outcome enum: VALID, SPAM
+   - Only address with MODERATOR role can resolve (AccessControl)
+   - If SPAM:
+     - slash the post bond: send bondAmount to challenger OR to treasury (choose a simple split 50/50 challenger/treasury)
+     - mark post removed = true
+     - reduce reputation off-chain (backend) immediately
+   - If VALID:
+     - challenger stake goes to post owner OR treasury
+     - post remains
+   - Emits ChallengeResolved(challengeId, postId, outcome, timestamp)
+
+3) withdrawPostBond(postId)
+   - Optional: allow post owner to withdraw bond after a timelock (e.g., 7 days) if not challenged/removed.
+   - This reduces long-term locking while still discouraging spam.
+   - If implementing, ensure it cannot be withdrawn if challenged or removed.
+
+Role model:
+- MODERATOR role granted to deployer by default (document how to change)
+- Treasury address set in constructor
+
+Backend changes:
+- Add endpoints to store challenge reason JSON -> reasonCID
+- Add tx prepare endpoints:
+  - POST /tx/prepare/challenge-post  body: { postId, reasonText }
+  - POST /tx/prepare/resolve-challenge body: { challengeId, outcome } (admin only)
+- Indexer listens to PostChallenged + ChallengeResolved and updates DB post status accordingly.
+
+Frontend changes:
+- On post detail page, add "Challenge" button:
+  - opens modal to write reason
+  - calls backend to store reason -> reasonCID + returns tx data
+  - user signs tx
+- If env flag ADMIN_UI=true, show admin moderation panel:
+  - list open challenges, buttons to resolve VALID/SPAM
+  - uses prepare endpoint and wallet-signs as moderator
+
+------------------------------------------------------------
+C) VERIFIED BEES (ATTESTATION / BADGE)
+------------------------------------------------------------
+Add verified attestations to HoneycombAgentRegistry.sol:
+
+Design:
+- verifiers are whitelisted addresses (e.g., your team, partners, community council)
+- verifier can mark an agent as verified with a short category string hash
+
+Contract changes:
+- mapping(agentId => bool verified)
+- mapping(agentId => bytes32 verifiedTag) (e.g., keccak256("core"), "partner", "audited", etc.)
+- mapping(address => bool isVerifier)
+Functions:
+1) setVerifier(address verifier, bool allowed) onlyRole(ADMIN)
+2) verifyAgent(agentId, bytes32 tag) onlyVerifier
+3) unverifyAgent(agentId) onlyVerifier or ADMIN
+Events:
+- VerifierSet(verifier, allowed)
+- AgentVerified(agentId, verifier, tag)
+- AgentUnverified(agentId, verifier)
+
+Backend:
+- Indexer stores verified status and tag in DB
+- Expose in GET /agents/:id and feed items
+
+Frontend:
+- Add verified badge on bee profile + next to author in feed
+- Tooltip shows tag (e.g., "partner")
+
+------------------------------------------------------------
+TRANSACTION PREP MODEL (REFRESH)
+------------------------------------------------------------
+Ensure all contract writes follow:
+Frontend -> Backend stores JSON / validates ownership -> Backend returns tx data -> Frontend wallet signs/sends.
+
+Update existing posts flow if any backend currently signs transactions.
+
+Tx preparation endpoints required (all return {to, data, value, chainId} plus friendly fields):
+- POST /tx/prepare/register-agent
+- POST /tx/prepare/create-post
+- POST /tx/prepare/challenge-post
+- POST /tx/prepare/resolve-challenge (admin)
+- POST /tx/prepare/verify-agent (admin/verifier)
+- POST /tx/prepare/unverify-agent (admin/verifier)
+- POST /tx/prepare/reputation-checkpoint (admin/oracle)
+
+------------------------------------------------------------
+DB / PRISMA
+------------------------------------------------------------
+Add tables:
+- votes (postId, agentId, direction, createdAt)
+- reputation (agentId, rep, updatedAt)
+- challenges (challengeId, postId, challenger, reasonCID, status, outcome, createdAt, resolvedAt)
+- agent_verifications (agentId, verified, tag, verifier, updatedAt)
+
+Migrations must run cleanly.
+
+------------------------------------------------------------
+README UPDATES
+------------------------------------------------------------
+Update README with:
+- concept overview (Bees/Cells/Honey)
+- security model (backend never holds keys)
+- moderation model (MODERATOR role; how to set it)
+- verifier model (how to add verifiers)
+- reputation checkpoint model (oracle role; how to run checkpoint in dev)
+- demo flows:
+  1) register bee
+  2) create cell
+  3) vote
+  4) challenge post
+  5) resolve challenge (admin)
+  6) create bounty, submit solution, award
+  7) submit reputation checkpoint (admin)
+
+RUN + FIX:
+After implementing, run:
+- pnpm test
+- pnpm dev
+Fix all errors until the full app works end-to-end locally on Hardhat.
+
+IMPORTANT: BNB Chain only. No Solana references in code or docs.

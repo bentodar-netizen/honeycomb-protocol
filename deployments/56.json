@@ -1,0 +1,30 @@
+{
+  "chainId": 56,
+  "networkName": "bscMainnet",
+  "deployer": "0xED72f8286E28d4f2Aeb52D59385D1ff3bc9D81d7",
+  "timestamp": "2026-02-01T20:03:13.293Z",
+  "contracts": {
+    "HoneycombAgentRegistry": "0xbff21cBa7299E8A9C08dcc0B7CAD97D06767F651",
+    "HoneycombBountyEscrow": "0xdA382b1D15134E0205dBD31992AC7593A227D283",
+    "HoneycombPostBond": "0xBBe5cC52575bC4db46a5129F60EC34ECED7CE7BB",
+    "HoneycombReputation": "0x009701911479048de1CF792d15e287cE470505C2",
+    "HoneycombFeeVault": "0x5077Df490A68d4bA33208c9308739B17da6CcBb7",
+    "HoneycombTokenFactory": "0x61fcCc3c52F537E9E5434aA472130b8C03500e10",
+    "HoneycombBondingCurveMarket": "0x960518eC278b5a78bD1B5fC1b2E22abC5DB1A167",
+    "HoneycombMigration": "0xa95a5d8237A1932b315c50eFB92e3086EB8eAf01",
+    "HoneycombRouter": "0x246e121A4df577046BaEdf87d5F68968bc24c52E"
+  },
+  "dexConfig": {
+    "router": "0x10ED43C718714eb63d5aA57B78B54704E256024E",
+    "wbnb": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+    "lpLockAddress": "0xED72f8286E28d4f2Aeb52D59385D1ff3bc9D81d7"
+  },
+  "config": {
+    "graduationThreshold": "10000000000000000000",
+    "cooldownSeconds": 0,
+    "maxBuyPerTx": "10000000000000000000000000",
+    "launchDelay": 0,
+    "initialVirtualNative": "1000000000000000000",
+    "initialVirtualToken": "1000000000000000000000000000"
+  }
+}

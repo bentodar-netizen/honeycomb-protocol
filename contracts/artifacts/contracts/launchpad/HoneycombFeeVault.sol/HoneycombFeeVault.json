@@ -1,0 +1,195 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "HoneycombFeeVault",
+  "sourceName": "contracts/launchpad/HoneycombFeeVault.sol",
+  "abi": [
+    {
+      "inputs": [],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "InsufficientBalance",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "owner",
+          "type": "address"
+        }
+      ],
+      "name": "OwnableInvalidOwner",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        }
+      ],
+      "name": "OwnableUnauthorizedAccount",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ReentrancyGuardReentrantCall",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "WithdrawFailed",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ZeroAmount",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "from",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "timestamp",
+          "type": "uint256"
+        }
+      ],
+      "name": "FeeReceived",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "to",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "timestamp",
+          "type": "uint256"
+        }
+      ],
+      "name": "FeeWithdrawn",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "previousOwner",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "newOwner",
+          "type": "address"
+        }
+      ],
+      "name": "OwnershipTransferred",
+      "type": "event"
+    },
+    {
+      "inputs": [],
+      "name": "balance",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "owner",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "renounceOwnership",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "newOwner",
+          "type": "address"
+        }
+      ],
+      "name": "transferOwnership",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "to",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "withdraw",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "stateMutability": "payable",
+      "type": "receive"
+    }
+  ],
+  "bytecode": "0x6080806040523461007e5733156100685760008054336001600160a01b03198216811783556040519290916001600160a01b0316907f8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e09080a36001805561037290816100848239f35b631e4fbdf760e01b815260006004820152602490fd5b600080fdfe60406080815260048036101561004e575b50361561001c57600080fd5b7f69fd8dfdf4c34a045b2ab26beadc87baa94008985ac36dbba86ed543c65849c28151913483524260208401523392a2005b600090813560e01c8063715018a6146102985780638da5cb5b14610270578063b69ef8a814610251578063f2fde38b146101c95763f3fef3a3146100925750610010565b82346101c557806003193601126101c5576100ab6102f5565b602435926100b7610310565b6002600154146101b757600260015583156101a95747841161019b578480808087865af13d156101965767ffffffffffffffff3d81811161018357855191601f8201601f19908116603f011683019081118382101761017057865281528660203d92013e5b15610162575081519283524260208401526001600160a01b0316917fb69e29a46d63092cadaa0577b63f2df489a350647b283ea59c6e84d70668f87a9190a26001805580f35b8251631d42c86760e21b8152fd5b634e487b7160e01b895260418552602489fd5b634e487b7160e01b885260418452602488fd5b61011c565b8251631e9acf1760e31b8152fd5b8251631f2a200560e01b8152fd5b8251633ee5aeb560e01b8152fd5b8280fd5b508290346101c55760203660031901126101c5576101e56102f5565b906101ee610310565b6001600160a01b0391821692831561023b57505082546001600160a01b0319811683178455167f8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e08380a380f35b51631e4fbdf760e01b8152908101849052602490fd5b82843461026c578160031936011261026c5751478152602090f35b5080fd5b82843461026c578160031936011261026c57905490516001600160a01b039091168152602090f35b82346102f257806003193601126102f2576102b1610310565b80546001600160a01b03198116825581906001600160a01b03167f8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e08280a380f35b80fd5b600435906001600160a01b038216820361030b57565b600080fd5b6000546001600160a01b0316330361032457565b60405163118cdaa760e01b8152336004820152602490fdfea2646970667358221220e337e28a58932c8b7a3941d87bb8e76cf431b763fd8b74b0579b6a45550521a364736f6c63430008180033",
+  "deployedBytecode": "0x60406080815260048036101561004e575b50361561001c57600080fd5b7f69fd8dfdf4c34a045b2ab26beadc87baa94008985ac36dbba86ed543c65849c28151913483524260208401523392a2005b600090813560e01c8063715018a6146102985780638da5cb5b14610270578063b69ef8a814610251578063f2fde38b146101c95763f3fef3a3146100925750610010565b82346101c557806003193601126101c5576100ab6102f5565b602435926100b7610310565b6002600154146101b757600260015583156101a95747841161019b578480808087865af13d156101965767ffffffffffffffff3d81811161018357855191601f8201601f19908116603f011683019081118382101761017057865281528660203d92013e5b15610162575081519283524260208401526001600160a01b0316917fb69e29a46d63092cadaa0577b63f2df489a350647b283ea59c6e84d70668f87a9190a26001805580f35b8251631d42c86760e21b8152fd5b634e487b7160e01b895260418552602489fd5b634e487b7160e01b885260418452602488fd5b61011c565b8251631e9acf1760e31b8152fd5b8251631f2a200560e01b8152fd5b8251633ee5aeb560e01b8152fd5b8280fd5b508290346101c55760203660031901126101c5576101e56102f5565b906101ee610310565b6001600160a01b0391821692831561023b57505082546001600160a01b0319811683178455167f8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e08380a380f35b51631e4fbdf760e01b8152908101849052602490fd5b82843461026c578160031936011261026c5751478152602090f35b5080fd5b82843461026c578160031936011261026c57905490516001600160a01b039091168152602090f35b82346102f257806003193601126102f2576102b1610310565b80546001600160a01b03198116825581906001600160a01b03167f8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e08280a380f35b80fd5b600435906001600160a01b038216820361030b57565b600080fd5b6000546001600160a01b0316330361032457565b60405163118cdaa760e01b8152336004820152602490fdfea2646970667358221220e337e28a58932c8b7a3941d87bb8e76cf431b763fd8b74b0579b6a45550521a364736f6c63430008180033",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}

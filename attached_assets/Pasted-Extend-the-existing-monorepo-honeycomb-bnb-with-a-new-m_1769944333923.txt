@@ -1,0 +1,127 @@
+Extend the existing monorepo "honeycomb-bnb" with a new module: "Honeycomb Launchpad" (Four.meme-like).
+BNB Chain only (EVM). Do NOT mention Solana anywhere.
+
+GOAL:
+Let Bees (agents) and humans create tokens, trade them on an internal bonding-curve market, and route 1% of all internal market trading fees to the Honeycomb treasury (FeeVault). Add a "graduation" mechanism that marks a token as GRADUATED once threshold is reached (DEX migration will be added in a later step).
+
+ARCHITECTURE RULE (CRITICAL):
+Backend must NEVER custody user private keys.
+All on-chain writes must be signed by the user's wallet from frontend or SDK.
+Backend provides: auth (nonce+JWT), JSON storage -> CID, indexing/DB, and tx preparation (returns {to,data,value,chainId}).
+
+TERMS:
+- Bees = agents
+- Cells = posts
+- Honey = bounties
+- Launch = token factory + bonding curve market
+- Treasury = FeeVault recipient
+
+CONTRACTS (Solidity + Hardhat):
+Create /packages/contracts/contracts/launchpad:
+
+1) HoneycombToken.sol (ERC20)
+- OpenZeppelin ERC20
+- Minting restricted to Factory OR Market (choose one clean approach).
+- Use fixed decimals (18).
+- No special taxes in token itself.
+
+2) HoneycombTokenFactory.sol
+- createToken(name, symbol, metadataCID, creatorBeeId) -> tokenAddress
+- Emits TokenCreated(token, creator, creatorBeeId, name, symbol, metadataCID, timestamp)
+- Stores token metadataCID mapping on-chain
+- Optional: require creatorBeeId ownership if provided (if creatorBeeId != 0, caller must own it in AgentRegistry)
+
+3) HoneycombFeeVault.sol
+- Receives native coin (BNB/ETH local) fees.
+- withdraw(to, amount) onlyOwner
+- Emits FeeWithdrawn(to, amount)
+
+4) HoneycombBondingCurveMarket.sol
+- Trades each launched token against native coin (BNB/ETH local).
+- 1% fee on every buy and sell routed to FeeVault (treasury). Fee is taken from amountIn.
+- Uses ReentrancyGuard.
+- Must support:
+  - buy(token, minTokensOut) payable
+  - sell(token, tokenAmountIn, minNativeOut)
+- Must emit Trade(token, trader, isBuy, nativeInOrOut, tokensInOrOut, feeNative, priceAfter, timestamp)
+- Maintains per-token market state:
+  - nativeReserve
+  - tokenReserve (market-held)
+  - totalRaisedNative
+  - graduated (bool)
+- Implements slippage protections (minOut).
+- Implements anti-bot defaults (configurable constants):
+  - cooldown per address per token (e.g., 10 seconds)
+  - max buy per tx (e.g., 1% of maxSupply) OR max native per tx
+  - optional "launch delay" (tradingStartTimestamp set at token creation)
+
+BONDING CURVE MODEL:
+- Keep math simple and testable.
+- Use a constant product style pool (x*y=k) OR a linear bonding curve, but MUST be correct, safe, and unit-tested.
+- Recommend constant product reserves:
+  - Market starts with initial virtual reserves to prevent zero-price.
+  - Provide constructor params: initialVirtualNative, initialVirtualToken
+
+GRADUATION (NO DEX in Prompt A):
+- A token becomes GRADUATED when totalRaisedNative >= threshold (constructor param).
+- When threshold hit, set graduated=true and emit Graduated(token, totalRaisedNative, timestamp).
+- After GRADUATED, internal trading should either:
+  A) stop (preferred), OR
+  B) continue but display warning.
+Choose A for safety: disallow buys/sells once graduated.
+
+DEPLOYMENT:
+- Hardhat deploy script must deploy:
+  AgentRegistry (existing), PostBond (existing), BountyEscrow (existing), Reputation/Moderation (existing if already added),
+  then FeeVault, TokenFactory, BondingCurveMarket.
+- Wire Factory + Market so created tokens are seeded properly.
+- Provide env-configurable params for threshold, feeBps=100, cooldownSec, maxTrade.
+
+BACKEND (Fastify):
+Add launchpad API endpoints (no on-chain signing):
+- POST /v1/launch/storage/token-metadata
+  input: { name, symbol, description, imageUrl?, links?, creatorBeeId }
+  output: { metadataCID }
+- POST /v1/launch/storage/token-post (optional)
+  store a "launch announcement" Cell JSON and return CID.
+
+TX PREP endpoints (validate auth/ownership, return tx data):
+- POST /v1/tx/prepare/launch/create-token
+  input: { creatorBeeId, metadataCID, name, symbol }
+  output: { to, data, value:"0", chainId }
+
+- POST /v1/tx/prepare/launch/buy
+  input: { token, nativeValueWei, minTokensOut }
+  output: { to, data, value:nativeValueWei, chainId }
+
+- POST /v1/tx/prepare/launch/sell
+  input: { token, tokenAmountIn, minNativeOut }
+  output: { to, data, value:"0", chainId }
+
+INDEXER:
+- Listen to TokenCreated, Trade, Graduated events.
+- Store in DB tables:
+  tokens(tokenAddress, creatorAddress, creatorBeeId, metadataCID, createdAt, graduated, totalRaisedNative)
+  trades(id, tokenAddress, trader, isBuy, nativeAmount, tokenAmount, feeNative, priceAfter, createdAt)
+
+FRONTEND (Next.js):
+Add "Launch" section:
+- /launch (list tokens)
+  show: name/symbol, progress (totalRaised/threshold), trades count, graduated badge
+- /launch/new (create token)
+  form collects metadata, calls backend storage -> CID
+  then uses tx prepare to create token; user signs tx
+- /launch/[token] (token page)
+  shows metadata, progress meter, recent trades table, buy/sell panel with slippage input
+  after tx, poll indexer endpoints to refresh
+
+SECURITY + TESTS (MANDATORY):
+- Contract tests for fee correctness (1%), slippage, cooldown, graduation stop, and reentrancy.
+- Ensure no integer under/overflows. Use Solidity 0.8+.
+- No privileged "drain" functions.
+- README update: explain that 1% fee is for internal market only, not DEX.
+
+DX:
+- pnpm dev must still run everything.
+- pnpm test must pass.
+- No secrets committed. Update .env.example.

@@ -1,0 +1,258 @@
+You are a senior full-stack + Solidity engineer. Build “BeePay” — the settlement layer for agents on Honeycomb — on BNB Chain ONLY.
+
+MISSION
+BeePay enables autonomous agent-to-agent payments with:
+1) Identity (agentId, humanId) so agents pay IDs not addresses
+2) Budget controls so agents cannot be drained
+3) Instant payments (micro-payments + pull payments)
+4) Conditional payments (escrows) between agents
+5) Optional third-party identifiers (validators) for high-trust receipts
+Humans can observe/manage, but the system is designed for AI agents to transact without humans.
+
+CHAIN / ASSETS
+- BNB Chain only (mainnet + testnet switchable via env)
+- Support native BNB and ERC20 (USDT/WBNB etc.)
+- PancakeSwap router not required for BeePay MVP (only payments)
+
+TECH STACK
+- Contracts: Solidity + Hardhat
+- Backend: Node.js (TypeScript) + Express
+- DB: SQLite + Prisma
+- Frontend: Next.js (TypeScript) + Tailwind
+- Web3: ethers v6
+- Indexer: backend listens to contract events, stores payment history and states
+- Realtime updates: SSE or WebSocket (Socket.io optional)
+
+HIGH-LEVEL ARCHITECTURE
+/apps/web     -> BeePay UI (Overview, Invoices, Escrows, Receipts, Budget)
+/apps/api     -> API + indexer + agent hooks (webhooks for agents)
+/contracts    -> on-chain settlement layer (Identity, Vault, Paymaster, Escrow, Validators)
+
+CORE ON-CHAIN CONTRACTS (MUST IMPLEMENT)
+
+1) IdentityRegistry.sol
+Goal: pay “identityId” not raw addresses; supports humans + AI agents.
+- identityId: bytes32 (computed from incremental nonce or keccak of (chainId, account, salt))
+- register(identityType, metadataURI) -> identityId
+- linkAccount(identityId, account) and unlinkAccount(...) (key rotation / multiple keys)
+- setMetadata(identityId, uri)
+- isAuthorized(identityId, account) -> bool
+- signature validation:
+  - if account is EOA: ecrecover
+  - if account is contract wallet: EIP-1271 isValidSignature
+Events:
+- IdentityRegistered(identityId, primaryAccount, identityType, metadataURI)
+- IdentityAccountLinked(identityId, account)
+- IdentityAccountUnlinked(identityId, account)
+- IdentityMetadataUpdated(identityId, metadataURI)
+
+2) BudgetVault.sol (one vault per identity OR a single vault managing multiple identities)
+Goal: autonomous agents can spend within limits; users fund them safely.
+- deposit(identityId, token, amount) payable for BNB
+- setDailyLimit(identityId, token, limit)
+- setPayeeLimit(identityId, payeeId, token, limit) (optional)
+- allowTarget(targetContract, allowed) (global allowlist)
+- spend(identityId, target, calldata, value) onlyAuthorized(identityId)
+  - enforce daily limits and allowed target
+  - track spend per day (UTC day based on block.timestamp / 86400)
+- emergencyFreeze(identityId, frozen) callable by identity owner (or admin for MVP)
+Events:
+- Deposited(identityId, token, amount, from)
+- LimitSet(identityId, token, limit)
+- PayeeLimitSet(identityId, payeeId, token, limit)
+- Spent(identityId, target, token, amount, memoHash optional)
+- Frozen(identityId, frozen)
+
+3) Paymaster.sol (instant payments + pull payments)
+Goal: fast agent-to-agent settlement.
+Functions:
+- pay(fromId, toId, token, amount, memoHash) payable for BNB
+  - supports paying directly from sender wallet OR via BudgetVault (BudgetVault will call Paymaster)
+  - platform fee bps -> treasury
+- payFromVault(fromId, toId, token, amount, memoHash) onlyVault
+Pull payments (agents charging agents automatically):
+- EIP-712 typed data “PaymentAuthorization” signed by payer identity:
+  fields: fromId, toId, token, amount, memoHash, nonce, deadline
+- claim(auth, signature) callable by toId authorized account
+  - verify signature against IdentityRegistry (EOA or EIP-1271)
+  - enforce nonce and deadline
+Events:
+- Payment(fromId, toId, token, grossAmount, feeAmount, memoHash, payerAccount)
+- PaymentClaimed(fromId, toId, token, grossAmount, feeAmount, memoHash)
+State:
+- nonces[fromId] mapping
+
+4) EscrowCore.sol (conditional payments between agents)
+Goal: outcomes-based settlement.
+Escrow struct:
+- escrowId (uint)
+- payerId (bytes32), payeeId (bytes32)
+- token (address, 0x0 for BNB)
+- amount
+- deadline (timestamp)
+- termsHash (bytes32)  // hash of invoice/terms JSON
+- conditionModule (address)
+- conditionData (bytes) // module-specific data
+- status: CREATED, FUNDED, RELEASED, REFUNDED, DISPUTED
+Functions:
+- createEscrow(payerId, payeeId, token, amount, deadline, termsHash, conditionModule, conditionData) -> escrowId
+- fund(escrowId) payable / ERC20 transferFrom
+- release(escrowId) (permissionless) if condition satisfied
+- refund(escrowId) if deadline passed and not satisfied (or condition says refundable)
+- dispute(escrowId) (optional in MVP: just freezes until resolved by module/council)
+Events:
+- EscrowCreated(escrowId, payerId, payeeId, token, amount, deadline, termsHash, conditionModule)
+- EscrowFunded(escrowId, from)
+- EscrowReleased(escrowId, to, feeAmount)
+- EscrowRefunded(escrowId, to)
+- EscrowDisputed(escrowId, by)
+
+5) Condition Modules (MVP must include at least 2)
+a) MutualSignCondition.sol
+- release if BOTH payerId and payeeId have signed a “ReleaseIntent(escrowId)” (EIP-712)
+- store approvals mapping
+Functions:
+- approveRelease(escrowId, signature) (or submit signature separately for each side)
+- isSatisfied(escrowId, data) -> bool
+Events:
+- ReleaseApproved(escrowId, identityId)
+
+b) QuorumSignCondition.sol (third-party validators)
+- requires K-of-N validator identity signatures over “Receipt(escrowId, outcomeHash)”
+- conditionData includes: validators[] identityIds, k, outcomeHash
+- isSatisfied returns true if >=k valid validator signatures recorded
+Events:
+- ReceiptSigned(escrowId, validatorId)
+- QuorumReached(escrowId)
+
+6) ValidatorRegistry.sol (optional but recommended for MVP if you include QuorumSignCondition)
+- registerValidator(identityId) with stake bond (BNB)
+- slash(identityId, amount, reason) (admin/council in MVP)
+- minimumBond enforced
+Events:
+- ValidatorRegistered(identityId, bond)
+- ValidatorSlashed(identityId, amount, reason)
+
+GLOBAL CONFIG
+- treasury address
+- feeBps (default 100 = 1%)
+- only BNB Chain addresses; chainId checks in scripts
+
+SECURITY REQUIREMENTS
+- Reentrancy guards
+- Checks-effects-interactions
+- SafeERC20 for ERC20
+- Strict access control via IdentityRegistry authorization
+- Nonce + deadline for pull payments
+- Escrow can only be released once
+- Avoid storage bloat in signature recording (store hash approvals)
+
+OFF-CHAIN / BACKEND (MUST IMPLEMENT)
+
+API + Indexer service:
+- listens to events from Paymaster/Escrow/Identity/Vault (ws or polling)
+- stores in DB:
+  - identities (id, type, metadataURI, linked accounts)
+  - payments (txHash, fromId, toId, token, amount, fee, memoHash, timestamp)
+  - invoices (off-chain objects, referenced by invoiceHash)
+  - escrows (state machine + module + termsHash)
+  - receipts (escrowId, outcomeHash, signers, evidenceURI optional)
+- exposes endpoints:
+  GET /beepay/overview?identityId=
+  GET /beepay/payments?identityId=&cursor=
+  GET /beepay/invoices?identityId=
+  POST /beepay/invoices  (store invoice JSON, return invoiceHash)
+  GET /beepay/escrows?identityId=
+  POST /beepay/escrows   (creates escrow via server-assisted tx building; final signing is client/agent)
+  POST /beepay/webhook   (agents can subscribe to events)
+
+Agent Hooks (very important):
+- provide a websocket/SSE stream: /beepay/stream?identityId=
+  events: payment_received, invoice_created, escrow_funded, escrow_ready, escrow_released
+- Provide sample “agent bot” script that:
+  - watches invoices addressed to it
+  - auto-claims pull payments if authorized
+  - auto-signs mutual release when it has delivered (simulated)
+
+FRONTEND (MUST IMPLEMENT)
+
+New top-level navigation item: “BeePay”
+Header tagline:
+“BeePay is the settlement layer for agents on Honeycomb.”
+
+BeePay pages/tabs:
+1) Overview
+- balances (BNB + supported ERC20)
+- net flow (24h, 7d)
+- active escrows count
+- pending invoices count
+- budget remaining today
+2) Payments
+- timeline feed (in/out)
+- filters by token, counterparty identity
+3) Invoices
+- Create invoice (seller):
+  fields: buyerId, token, amount, expiry, serviceType, terms (text)
+  store invoice via API -> invoiceHash
+- Invoice list (received/sent)
+- “Auto-claim” toggle (for pull payments; stored locally + agent uses it)
+4) Escrows
+- Create escrow:
+  choose condition:
+    - Mutual release (default)
+    - Validator quorum (advanced; choose validators + k)
+  show status and condition satisfaction progress
+5) Budget
+- set daily limits
+- allowlist targets (show fixed list: Paymaster, EscrowCore)
+- freeze/unfreeze
+
+WALLET CONNECT
+- MetaMask for MVP (WalletConnect optional)
+- identity selection: user can register identity and link current wallet
+- show identityId clearly (copy button)
+
+CONFIG / ENV
+- NEXT_PUBLIC_CHAIN_ID
+- NEXT_PUBLIC_RPC_URL
+- NEXT_PUBLIC_IDENTITY_REGISTRY
+- NEXT_PUBLIC_BUDGET_VAULT
+- NEXT_PUBLIC_PAYMASTER
+- NEXT_PUBLIC_ESCROW_CORE
+- NEXT_PUBLIC_TREASURY
+- API_URL
+Backend env:
+- RPC_URL
+- CHAIN_ID
+- PRIVATE_KEY (deployer)
+- START_BLOCK
+- TREASURY
+- FEE_BPS
+
+TESTS (MUST INCLUDE)
+- identity register + linkAccount + EIP-1271 happy path (use a mock 1271 wallet)
+- pay() BNB and ERC20 with fees
+- pull payment claim with nonce/deadline
+- escrow create/fund/release via MutualSignCondition
+- escrow release via QuorumSignCondition (k-of-n)
+- budget vault daily limit enforcement + allowed target enforcement
+
+DELIVERABLES
+- Full monorepo with /contracts /apps/api /apps/web
+- Deployment scripts to BNB testnet
+- Seed script that creates:
+  - 2 identities (Agent A, Agent B)
+  - 1 validator identity
+  - sample invoice + sample escrow
+- README:
+  - local run steps
+  - deploy to testnet steps
+  - how BeePay works conceptually for agents
+  - how to integrate BeePay calls from Honeycomb Launcher and Duels
+
+INTEGRATION NOTES (include in README)
+- Honeycomb Launcher: pay agent launch bounties via EscrowCore with OnChainCondition (future) OR MutualSignCondition in MVP
+- Duels/Predictions: rewards paid via Paymaster or escrowed pot via EscrowCore
+- Agents: always spend via BudgetVault; never hold treasury funds in raw EOA
+
+Now generate the full repository (contracts + backend + frontend) with clean code, comments, and step-by-step run instructions.
